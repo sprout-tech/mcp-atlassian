@@ -15,19 +15,30 @@ class AttachmentsOperationsProto(Protocol):
 
     @abstractmethod
     def upload_attachments(
-        self, issue_key: str, file_paths: list[str]
+        self, issue_key: str, file_paths: list[str | dict[str, Any]]
     ) -> dict[str, Any]:
         """
         Upload multiple attachments to a Jira issue.
 
         Args:
             issue_key: The Jira issue key (e.g., 'PROJ-123')
-            file_paths: List of paths to files to upload
+            file_paths: List of workspace-relative paths and/or in-memory
+                attachment dicts (``filename``, ``content``, optional
+                ``mime_type``).
 
         Returns:
             A dictionary with upload results
         """
 
+    @abstractmethod
+    def upload_attachment_from_content(
+        self,
+        issue_key: str,
+        filename: str,
+        content: bytes,
+        mime_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Upload a single attachment from in-memory bytes."""
 
 class FormsOperationsProto(Protocol):
     """Protocol defining ProForma forms operations interface."""

@@ -1,7 +1,5 @@
 """Module for Jira Service Management customer request operations."""
 
-import base64
-import binascii
 import logging
 from typing import Any
 
@@ -13,7 +11,7 @@ from ..models.jira import (
     JiraRequestTypeFieldsResult,
     JiraRequestTypesResult,
 )
-from ..utils.media import ATTACHMENT_MAX_BYTES
+from ..utils.media import ATTACHMENT_MAX_BYTES, decode_inline_attachment
 from .client import JiraClient
 
 logger = logging.getLogger("mcp-jira")
@@ -450,40 +448,7 @@ class CustomerRequestsMixin(JiraClient):
             ValueError: If the descriptor is malformed or the content is not
                 valid base64.
         """
-        if not isinstance(file, dict):
-            raise ValueError("Each attachment must be an object")
-
-        filename = file.get("filename")
-        if not isinstance(filename, str) or not filename.strip():
-            raise ValueError("Attachment filename is required")
-
-        mime_type = file.get("mime_type") or "application/octet-stream"
-        if not isinstance(mime_type, str) or not mime_type.strip():
-            msg = f"Attachment '{filename}' mime_type must be a string"
-            raise ValueError(msg)
-
-        encoded = file.get("base64")
-        if not isinstance(encoded, str) or not encoded.strip():
-            msg = f"Attachment '{filename}' is missing base64 content"
-            raise ValueError(msg)
-
-        try:
-            content = base64.b64decode(encoded, validate=True)
-        except (binascii.Error, ValueError) as exc:
-            msg = f"Attachment '{filename}' has invalid base64 content"
-            raise ValueError(msg) from exc
-
-        if not content:
-            msg = f"Attachment '{filename}' is empty"
-            raise ValueError(msg)
-        if len(content) > ATTACHMENT_MAX_BYTES:
-            msg = (
-                f"Attachment '{filename}' exceeds the "
-                f"{ATTACHMENT_MAX_BYTES // (1024 * 1024)} MiB inline limit"
-            )
-            raise ValueError(msg)
-
-        return filename.strip(), mime_type.strip(), content
+        return decode_inline_attachment(file, max_bytes=ATTACHMENT_MAX_BYTES)
 
     def attach_temporary_files(
         self,

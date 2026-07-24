@@ -3,12 +3,13 @@
 import logging
 import mimetypes
 import os
+from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO, cast
 
 from ..models.jira import JiraAttachment
 from ..utils.io import validate_safe_path
-from ..utils.media import ATTACHMENT_MAX_BYTES
+from ..utils.media import ATTACHMENT_MAX_BYTES, sanitize_attachment_filename
 from .client import JiraClient
 from .protocols import AttachmentsOperationsProto
 
@@ -426,15 +427,123 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             logger.error(f"Error uploading attachment: {error_msg}")
             return {"success": False, "error": error_msg}
 
+    def upload_attachment_from_content(
+        self,
+        issue_key: str,
+        filename: str,
+        content: bytes,
+        mime_type: str | None = None,
+    ) -> dict[str, Any]:
+        """Upload a single attachment from in-memory bytes.
+
+        Filesystem-free counterpart to ``upload_attachment``. Intended for
+        chat-paste / remote MCP flows where the caller already has the file
+        bytes (for example MCP ``ImageContent.data``) and cannot rely on a
+        server-local path under the workspace CWD.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123').
+            filename: Attachment filename (directory components are stripped).
+            content: Raw file bytes to upload.
+            mime_type: Optional MIME type; guessed from filename when omitted.
+
+        Returns:
+            A dictionary with upload result information.
+        """
+        if not issue_key:
+            logger.error("No issue key provided for attachment upload")
+            return {"success": False, "error": "No issue key provided"}
+
+        try:
+            safe_filename = sanitize_attachment_filename(filename)
+        except ValueError as exc:
+            logger.error(str(exc))
+            return {"success": False, "error": str(exc)}
+
+        if content is None:
+            logger.error("No file content provided for attachment upload")
+            return {"success": False, "error": "No file content provided"}
+        if not content:
+            logger.error(f"Attachment '{safe_filename}' is empty")
+            return {
+                "success": False,
+                "error": f"Attachment '{safe_filename}' is empty",
+            }
+        if len(content) > ATTACHMENT_MAX_BYTES:
+            error = (
+                f"Attachment '{safe_filename}' exceeds the "
+                f"{ATTACHMENT_MAX_BYTES // (1024 * 1024)} MiB inline limit"
+            )
+            logger.error(error)
+            return {"success": False, "error": error}
+
+        resolved_mime = mime_type
+        if not resolved_mime:
+            resolved_mime = (
+                mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
+            )
+
+        try:
+            logger.info(
+                f"Uploading attachment {safe_filename} ({len(content)} bytes) "
+                f"to issue {issue_key}"
+            )
+            # Tuple form keeps the basename under our control; BytesIO never
+            # touches the filesystem (chat/remote uploads must not write /tmp).
+            # cast: atlassian-python-api types the arg as BinaryIO, but the
+            # underlying requests multipart API accepts (filename, file, mime).
+            attachment = self.jira.add_attachment_object(
+                issue_key,
+                cast(
+                    BinaryIO,
+                    (safe_filename, BytesIO(content), resolved_mime),
+                ),
+            )
+
+            if attachment:
+                logger.info(
+                    f"Successfully uploaded attachment {safe_filename} to "
+                    f"{issue_key} (size: {len(content)} bytes)"
+                )
+                return {
+                    "success": True,
+                    "issue_key": issue_key,
+                    "filename": safe_filename,
+                    "size": len(content),
+                    "id": attachment.get("id")
+                    if isinstance(attachment, dict)
+                    else None,
+                }
+
+            logger.error(f"Failed to upload attachment {safe_filename} to {issue_key}")
+            return {
+                "success": False,
+                "error": (
+                    f"Failed to upload attachment {safe_filename} to {issue_key}"
+                ),
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error uploading attachment from content: {error_msg}")
+            return {"success": False, "error": error_msg}
+
     def upload_attachments(
-        self, issue_key: str, file_paths: list[str]
+        self, issue_key: str, file_paths: list[str | dict[str, Any]]
     ) -> dict[str, Any]:
         """
         Upload multiple attachments to a Jira issue.
 
+        Each item may be either:
+
+        * a ``str`` path confined to the server workspace via
+          ``validate_safe_path``, or
+        * a ``dict`` with decoded ``content`` bytes plus ``filename``
+          (and optional ``mime_type``) for filesystem-free uploads.
+
         Args:
             issue_key: The Jira issue key (e.g., 'PROJ-123')
-            file_paths: List of paths to files to upload
+            file_paths: List of file paths and/or in-memory attachment dicts.
 
         Returns:
             A dictionary with upload results
@@ -453,8 +562,27 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
         uploaded = []
         failed = []
 
-        for file_path in file_paths:
-            result = self.upload_attachment(issue_key, file_path)
+        for item in file_paths:
+            if isinstance(item, dict):
+                filename = str(item.get("filename") or "attachment")
+                raw_content = item.get("content", b"")
+                if not isinstance(raw_content, (bytes, bytearray)):
+                    result = {
+                        "success": False,
+                        "filename": filename,
+                        "error": f"Attachment '{filename}' content must be bytes",
+                    }
+                else:
+                    mime = item.get("mime_type")
+                    result = self.upload_attachment_from_content(
+                        issue_key,
+                        filename=filename,
+                        content=bytes(raw_content),
+                        mime_type=mime if isinstance(mime, str) else None,
+                    )
+            else:
+                filename = os.path.basename(str(item))
+                result = self.upload_attachment(issue_key, str(item))
 
             if result.get("success"):
                 uploaded.append(
@@ -467,7 +595,7 @@ class AttachmentsMixin(JiraClient, AttachmentsOperationsProto):
             else:
                 failed.append(
                     {
-                        "filename": os.path.basename(file_path),
+                        "filename": result.get("filename") or filename,
                         "error": result.get("error"),
                     }
                 )

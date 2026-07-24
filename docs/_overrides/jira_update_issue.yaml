@@ -1,8 +1,20 @@
-example: |
-  {"issue_key": "PROJ-123", "fields": "{\"summary\": \"Updated title\", \"description\": \"New description\"}", "transition": "Done", "comment": "Completed the work", "worklog": "1h"}
+examples:
+  - |
+    {"issue_key": "PROJ-123", "attachments": "[{\"filename\":\"screenshot.png\",\"mime_type\":\"image/png\",\"base64\":\"<ImageContent.data>\"}]", "return_fields": "key,summary"}
+  - |
+    {"issue_key": "PROJ-123", "attachments": "[\"uploads/screenshot.png\"]", "return_fields": "key,summary"}
+  - |
+    {"issue_key": "PROJ-123", "fields": "{\"summary\": \"Updated title\", \"description\": \"New description\"}", "transition": "Done", "comment": "Completed the work", "worklog": "1h"}
 tips: |
-  Save response tokens: after an update you rarely need the whole issue back. Set `return_fields` to only the field(s) you changed (e.g., `return_fields: "duedate"`) — this can cut thousands of tokens. Use `*all` only when you need the full updated issue.
+  **Attach a screenshot / chat image** (no separate upload tool):
 
-  `fields` is optional when you only need to transition, comment, or log work. If `transition` and `comment` are both provided, the issue is transitioned first and the comment is added separately afterward. Use `comment_visibility` to restrict the comment's visibility.
+  - **Claude Desktop / agent sandbox that cannot write into the MCP install dir:** pass inline base64 from `ImageContent.data` — `attachments: [{"filename":"shot.png","mime_type":"image/png","base64":"<ImageContent.data>"}]`. Do not pass paths under your private `uploads/` folder; the MCP server cannot read them (`validate_safe_path` confines paths to its own CWD).
+  - **Same filesystem as the MCP server (e.g. Cursor in this repo):** prefer a relative path under the MCP CWD — `attachments: ["uploads/shot.png"]`.
+
+  Inline base64 is soft-capped (default 5 MiB). Absolute paths outside the MCP CWD are always rejected.
+
+  Save response tokens: after an update you rarely need the whole issue back. Set `return_fields` to only the field(s) you changed (e.g., `return_fields: "duedate"`). Use `*all` only when you need the full updated issue.
+
+  `fields` is optional when you only need to attach files, transition, comment, or log work.
 
   Use `additional_fields` as a JSON string for any field not covered by explicit parameters. Find field IDs with `jira_search_fields`.
