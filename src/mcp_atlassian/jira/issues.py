@@ -1160,7 +1160,9 @@ class IssuesMixin(
                 None lets the API return its default field set. Narrowing this
                 reduces the size of the returned issue.
             **kwargs: Additional fields to update. Special fields include:
-                - attachments: List of file paths to upload as attachments
+                - attachments: List of workspace file paths (str) and/or
+                  in-memory attachment dicts with ``filename``, ``content``
+                  (bytes), and optional ``mime_type``
                 - status: New status for the issue (handled via transitions)
                 - assignee: New assignee for the issue
                 - parent: Parent issue key (str or {"key": "..."} dict)

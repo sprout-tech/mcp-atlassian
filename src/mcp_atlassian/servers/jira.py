@@ -23,6 +23,8 @@ from mcp_atlassian.servers.helpers import resolve_transition
 from mcp_atlassian.utils.decorators import check_write_access
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
+    ATTACHMENT_MAX_COUNT,
+    decode_inline_attachment,
     fetch_and_encode_attachment,
     is_image_attachment,
 )
@@ -246,6 +248,91 @@ def _parse_attachments(
     if not all(isinstance(item, dict) for item in parsed):
         raise ValueError("attachments must be a JSON array of attachment objects.")
     return parsed
+
+
+def _parse_issue_attachments(
+    attachments: str | None,
+) -> list[str | dict[str, Any]]:
+    """Parse ``jira_update_issue`` attachments into upload-ready items.
+
+    Accepts a JSON array (preferred) or a comma-separated list of workspace
+    paths. Array items may be:
+
+    * path strings confined to the server CWD by ``validate_safe_path``, or
+    * objects with ``filename``, ``base64``, and optional ``mime_type``
+      (chat-paste / remote MCP uploads; decoded in memory, never written
+      to disk).
+
+    Returns:
+        A list of path strings and/or dicts with ``filename``, ``content``
+        (bytes), and ``mime_type``.
+
+    Raises:
+        ValueError: If the payload is malformed, exceeds count/size limits,
+            or mixes invalid item shapes.
+    """
+    if attachments is None:
+        return []
+    if not isinstance(attachments, str):
+        raise ValueError(
+            "attachments must be a JSON array string or comma-separated string."
+        )
+
+    stripped = attachments.strip()
+    if not stripped:
+        return []
+
+    parsed: list[Any]
+    try:
+        loaded = json.loads(stripped)
+        if not isinstance(loaded, list):
+            raise ValueError("attachments JSON string must be an array.")
+        parsed = loaded
+    except json.JSONDecodeError:
+        parsed = [p.strip() for p in stripped.split(",") if p.strip()]
+
+    if len(parsed) > ATTACHMENT_MAX_COUNT:
+        raise ValueError(
+            f"attachments exceeds the maximum of {ATTACHMENT_MAX_COUNT} items per call."
+        )
+
+    result: list[str | dict[str, Any]] = []
+    for index, item in enumerate(parsed):
+        if isinstance(item, str):
+            path = item.strip()
+            if not path:
+                raise ValueError(f"attachments[{index}] path must be non-empty.")
+            result.append(path)
+            continue
+
+        if isinstance(item, dict):
+            if "base64" in item:
+                filename, mime_type, content = decode_inline_attachment(item)
+                result.append(
+                    {
+                        "filename": filename,
+                        "mime_type": mime_type,
+                        "content": content,
+                    }
+                )
+                continue
+            if (
+                "path" in item
+                and isinstance(item["path"], str)
+                and item["path"].strip()
+            ):
+                result.append(item["path"].strip())
+                continue
+            raise ValueError(
+                f"attachments[{index}] objects must include 'base64' "
+                "(with 'filename') or a 'path' string."
+            )
+
+        raise ValueError(
+            f"attachments[{index}] must be a path string or an attachment object."
+        )
+
+    return result
 
 
 @jira_mcp.tool(
@@ -2022,8 +2109,19 @@ async def update_issue(
         str | None,
         Field(
             description=(
-                "(Optional) JSON string array or comma-separated list of file paths to attach to the issue. "
-                "Example: '/path/to/file1.txt,/path/to/file2.txt' or ['/path/to/file1.txt','/path/to/file2.txt']"
+                "(Optional) Attachments to upload. Prefer a JSON array string. "
+                "Each item is either a workspace-relative file path string "
+                "(confined to the MCP server CWD; absolute paths outside the "
+                "workspace are rejected), or an object with 'filename', "
+                "base64-encoded 'base64' content, and optional 'mime_type' "
+                "for chat-paste / remote uploads that never touch the "
+                "filesystem. Example path list: "
+                '["screenshots/a.png"] or comma-separated '
+                "'screenshots/a.png,docs/b.pdf'. Example inline (from chat "
+                "ImageContent.data): "
+                '[{"filename":"shot.png","mime_type":"image/png","base64":"..."}]. '
+                f"At most {ATTACHMENT_MAX_COUNT} items; each inline payload "
+                f"capped at {ATTACHMENT_MAX_BYTES // (1024 * 1024)} MiB."
             ),
             default=None,
         ),
@@ -2098,7 +2196,8 @@ async def update_issue(
             'description' should use Markdown format.
         additional_fields: Optional JSON string of additional fields.
         components: Comma-separated list of component names.
-        attachments: Optional JSON array string or comma-separated list of file paths.
+        attachments: Optional JSON array of workspace file paths and/or
+            inline ``{filename, base64, mime_type?}`` objects (chat images).
         transition: Optional transition name or ID.
         comment: Optional issue comment in Markdown format.
         comment_visibility: Optional JSON string restricting comment visibility.
@@ -2128,32 +2227,15 @@ async def update_issue(
 
     extra_fields = _parse_additional_fields(additional_fields)
 
-    # Parse attachments
-    attachment_paths = []
-    if attachments:
-        if isinstance(attachments, str):
-            try:
-                parsed = json.loads(attachments)
-                if isinstance(parsed, list):
-                    attachment_paths = [str(p) for p in parsed]
-                else:
-                    raise ValueError("attachments JSON string must be an array.")
-            except json.JSONDecodeError:
-                # Assume comma-separated if not valid JSON array
-                attachment_paths = [
-                    p.strip() for p in attachments.split(",") if p.strip()
-                ]
-        else:
-            raise ValueError(
-                "attachments must be a JSON array string or comma-separated string."
-            )
+    # Parse attachments (workspace paths and/or decoded inline content)
+    attachment_items = _parse_issue_attachments(attachments)
 
     # Combine fields and additional_fields
     all_updates = {**update_fields, **extra_fields}
     if components_list:
         all_updates["components"] = components_list
-    if attachment_paths:
-        all_updates["attachments"] = attachment_paths
+    if attachment_items:
+        all_updates["attachments"] = attachment_items
 
     # Jira handles status changes through transitions. Avoid sending both a
     # status field and a requested transition, which would result in two

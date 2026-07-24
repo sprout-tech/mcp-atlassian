@@ -148,12 +148,21 @@ def mock_jira_fetcher():
     # Configure update_issue
     def mock_update_issue(issue_key, **kwargs):
         mock_issue = MagicMock()
+        # Do not echo attachment payloads (may contain raw bytes) into the
+        # simplified issue dict — real update_issue stores upload results in
+        # custom_fields instead.
+        serializable = {
+            k: v
+            for k, v in kwargs.items()
+            if k not in ("fields", "status", "attachments", "return_fields")
+        }
         mock_issue.to_simplified_dict.return_value = {
             "key": issue_key,
             "summary": "Updated Issue",
             "status": {"name": "Open"},
-            **{k: v for k, v in kwargs.items() if k not in ("fields", "status")},
+            **serializable,
         }
+        mock_issue.custom_fields = {}
         return mock_issue
 
     mock_fetcher.update_issue.side_effect = mock_update_issue
@@ -2373,6 +2382,112 @@ async def test_update_issue_additional_fields_empty_string(jira_client):
             },
         )
     assert "not valid JSON" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_update_issue_with_inline_base64_attachment(
+    jira_client, mock_jira_fetcher
+):
+    """Chat-paste style attachment objects are decoded and forwarded as bytes."""
+    import base64
+
+    payload = base64.b64encode(b"png-bytes").decode("ascii")
+    response = await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "attachments": json.dumps(
+                [
+                    {
+                        "filename": "shot.png",
+                        "mime_type": "image/png",
+                        "base64": payload,
+                    }
+                ]
+            ),
+            "return_fields": "key",
+        },
+    )
+    content = json.loads(response.content[0].text)
+    assert content["message"] == "Issue updated successfully"
+    call_kwargs = mock_jira_fetcher.update_issue.call_args[1]
+    attachments = call_kwargs["attachments"]
+    assert len(attachments) == 1
+    assert attachments[0]["filename"] == "shot.png"
+    assert attachments[0]["mime_type"] == "image/png"
+    assert attachments[0]["content"] == b"png-bytes"
+
+
+@pytest.mark.anyio
+async def test_update_issue_with_mixed_path_and_inline_attachments(
+    jira_client, mock_jira_fetcher
+):
+    """Mixed path strings and inline objects are both accepted."""
+    import base64
+
+    payload = base64.b64encode(b"img").decode("ascii")
+    await jira_client.call_tool(
+        "jira_update_issue",
+        {
+            "issue_key": "TEST-123",
+            "attachments": json.dumps(
+                [
+                    "screenshots/a.png",
+                    {"filename": "b.png", "base64": payload},
+                ]
+            ),
+            "return_fields": "key",
+        },
+    )
+    attachments = mock_jira_fetcher.update_issue.call_args[1]["attachments"]
+    assert attachments[0] == "screenshots/a.png"
+    assert attachments[1]["filename"] == "b.png"
+    assert attachments[1]["content"] == b"img"
+
+
+@pytest.mark.anyio
+async def test_update_issue_rejects_invalid_inline_base64(jira_client):
+    """Invalid base64 in an attachment object must fail before update_issue."""
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "attachments": json.dumps([{"filename": "bad.png", "base64": "!!!"}]),
+            },
+        )
+    assert "invalid base64" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_update_issue_rejects_too_many_attachments(jira_client):
+    """Attachment count is capped to limit memory DoS from huge arrays."""
+    from mcp_atlassian.utils.media import ATTACHMENT_MAX_COUNT
+
+    paths = [f"file{i}.txt" for i in range(ATTACHMENT_MAX_COUNT + 1)]
+    with pytest.raises(ToolError) as excinfo:
+        await jira_client.call_tool(
+            "jira_update_issue",
+            {
+                "issue_key": "TEST-123",
+                "attachments": json.dumps(paths),
+            },
+        )
+    assert "maximum of" in str(excinfo.value)
+
+
+def test_parse_issue_attachments_path_csv() -> None:
+    """Comma-separated paths remain supported for backward compatibility."""
+    from mcp_atlassian.servers.jira import _parse_issue_attachments
+
+    assert _parse_issue_attachments("a.png, b.pdf") == ["a.png", "b.pdf"]
+
+
+def test_parse_issue_attachments_rejects_non_object_non_string() -> None:
+    from mcp_atlassian.servers.jira import _parse_issue_attachments
+
+    with pytest.raises(ValueError, match="path string or an attachment object"):
+        _parse_issue_attachments(json.dumps([123]))
 
 
 @pytest.mark.anyio

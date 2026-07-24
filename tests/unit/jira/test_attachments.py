@@ -1408,3 +1408,112 @@ class TestUploadPathTraversalRegression:
             "download targeting the CWD (where Python imports modules) must be "
             "confined to a dedicated directory, not allowed to overwrite source files"
         )
+
+
+class TestUploadAttachmentFromContent:
+    """In-memory (chat / remote) upload — must never open a filesystem path."""
+
+    @pytest.fixture
+    def attachments_mixin(self, jira_fetcher: JiraFetcher) -> AttachmentsMixin:
+        mixin = jira_fetcher
+        mixin.jira = MagicMock()
+        return mixin
+
+    def test_upload_from_content_success(
+        self, attachments_mixin: AttachmentsMixin
+    ) -> None:
+        attachments_mixin.jira.add_attachment_object.return_value = {
+            "id": "99",
+            "filename": "shot.png",
+        }
+
+        with patch("builtins.open") as mock_file_open:
+            result = attachments_mixin.upload_attachment_from_content(
+                "PROJ-1",
+                filename="shot.png",
+                content=b"png-bytes",
+                mime_type="image/png",
+            )
+
+        assert result["success"] is True
+        assert result["filename"] == "shot.png"
+        assert result["size"] == len(b"png-bytes")
+        assert result["id"] == "99"
+        mock_file_open.assert_not_called()
+        attachments_mixin.jira.add_attachment.assert_not_called()
+        call_args = attachments_mixin.jira.add_attachment_object.call_args
+        assert call_args[0][0] == "PROJ-1"
+        filename, fileobj, mime = call_args[0][1]
+        assert filename == "shot.png"
+        assert mime == "image/png"
+        assert fileobj.read() == b"png-bytes"
+
+    def test_upload_from_content_sanitizes_filename(
+        self, attachments_mixin: AttachmentsMixin
+    ) -> None:
+        attachments_mixin.jira.add_attachment_object.return_value = {"id": "1"}
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "PROJ-1",
+            filename="/tmp/../evil.png",
+            content=b"x",
+        )
+
+        assert result["success"] is True
+        assert result["filename"] == "evil.png"
+        filename, _fileobj, _mime = (
+            attachments_mixin.jira.add_attachment_object.call_args[0][1]
+        )
+        assert filename == "evil.png"
+
+    def test_upload_from_content_rejects_oversized(
+        self, attachments_mixin: AttachmentsMixin
+    ) -> None:
+        from mcp_atlassian.utils.media import ATTACHMENT_MAX_BYTES
+
+        result = attachments_mixin.upload_attachment_from_content(
+            "PROJ-1",
+            filename="big.bin",
+            content=b"x" * (ATTACHMENT_MAX_BYTES + 1),
+        )
+
+        assert result["success"] is False
+        assert "exceeds" in result["error"]
+        attachments_mixin.jira.add_attachment_object.assert_not_called()
+
+    def test_upload_attachments_mixed_path_and_content(
+        self, attachments_mixin: AttachmentsMixin, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        disk_file = workspace / "on_disk.txt"
+        disk_file.write_bytes(b"disk")
+
+        attachments_mixin.jira.add_attachment.return_value = {
+            "id": "1",
+            "filename": "on_disk.txt",
+        }
+        attachments_mixin.jira.add_attachment_object.return_value = {
+            "id": "2",
+            "filename": "inline.png",
+        }
+
+        with patch("os.getcwd", return_value=str(workspace)):
+            result = attachments_mixin.upload_attachments(
+                "PROJ-1",
+                [
+                    str(disk_file),
+                    {
+                        "filename": "inline.png",
+                        "content": b"img",
+                        "mime_type": "image/png",
+                    },
+                ],
+            )
+
+        assert result["total"] == 2
+        assert len(result["uploaded"]) == 2
+        assert {u["filename"] for u in result["uploaded"]} == {
+            "on_disk.txt",
+            "inline.png",
+        }

@@ -13,9 +13,13 @@ from .lifecycle import (
 )
 from .logging import setup_logging
 from .media import (
+    ATTACHMENT_MAX_BASE64_CHARS,
     ATTACHMENT_MAX_BYTES,
+    ATTACHMENT_MAX_COUNT,
+    decode_inline_attachment,
     fetch_and_encode_attachment,
     is_image_attachment,
+    sanitize_attachment_filename,
 )
 
 # Export OAuth utilities
@@ -30,14 +34,18 @@ from .urls import is_atlassian_cloud_url, resolve_relative_url, validate_url_for
 
 # Export all utility functions for backward compatibility
 __all__ = [
+    "ATTACHMENT_MAX_BASE64_CHARS",
     "ATTACHMENT_MAX_BYTES",
+    "ATTACHMENT_MAX_COUNT",
     "NoProxyAdapter",
     "SSLIgnoreAdapter",
     "configure_proxy_bypass",
     "configure_ssl_verification",
+    "decode_inline_attachment",
     "is_atlassian_cloud_url",
     "is_image_attachment",
     "is_read_only_mode",
+    "sanitize_attachment_filename",
     "validate_safe_path",
     "setup_logging",
     "parse_date",

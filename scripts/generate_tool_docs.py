@@ -184,7 +184,10 @@ CATEGORY_META: dict[str, dict[str, str]] = {
     },
     "jira-attachments": {
         "title": "Jira Attachments",
-        "description": "Download attachments and render issue images",
+        "description": (
+            "Download attachments, render issue images, and upload via "
+            "jira_update_issue (paths or chat base64)"
+        ),
     },
     "jira-service-desk": {
         "title": "Jira Service Desk",

@@ -6,8 +6,11 @@ import pytest
 
 from mcp_atlassian.utils.media import (
     ATTACHMENT_MAX_BYTES,
+    ATTACHMENT_MAX_COUNT,
+    decode_inline_attachment,
     fetch_and_encode_attachment,
     is_image_attachment,
+    sanitize_attachment_filename,
 )
 
 
@@ -220,3 +223,98 @@ class TestFetchAndEncodeAttachment:
         assert encoded is None
         assert mime is None
         assert size == 150
+
+
+class TestSanitizeAttachmentFilename:
+    """Tests for sanitize_attachment_filename."""
+
+    def test_strips_directory_components(self) -> None:
+        assert sanitize_attachment_filename("../../etc/passwd") == "passwd"
+        assert sanitize_attachment_filename("/tmp/evil.png") == "evil.png"
+
+    def test_rejects_empty_and_dot_names(self) -> None:
+        with pytest.raises(ValueError, match="required"):
+            sanitize_attachment_filename("   ")
+        with pytest.raises(ValueError, match="invalid"):
+            sanitize_attachment_filename(".")
+        with pytest.raises(ValueError, match="invalid"):
+            sanitize_attachment_filename("..")
+
+
+class TestDecodeInlineAttachment:
+    """Tests for decode_inline_attachment (chat / remote upload path)."""
+
+    def test_success(self) -> None:
+        filename, mime, content = decode_inline_attachment(
+            {
+                "filename": "shot.png",
+                "mime_type": "image/png",
+                "base64": base64.b64encode(b"png-bytes").decode("ascii"),
+            }
+        )
+        assert filename == "shot.png"
+        assert mime == "image/png"
+        assert content == b"png-bytes"
+
+    def test_guesses_mime_when_missing(self) -> None:
+        filename, mime, content = decode_inline_attachment(
+            {
+                "filename": "shot.png",
+                "base64": base64.b64encode(b"png-bytes").decode("ascii"),
+            }
+        )
+        assert filename == "shot.png"
+        assert mime == "image/png"
+        assert content == b"png-bytes"
+
+    def test_sanitizes_filename_path_traversal(self) -> None:
+        filename, _mime, content = decode_inline_attachment(
+            {
+                "filename": "../../tmp/evil.png",
+                "base64": base64.b64encode(b"x").decode("ascii"),
+            }
+        )
+        assert filename == "evil.png"
+        assert content == b"x"
+
+    def test_rejects_invalid_base64(self) -> None:
+        with pytest.raises(ValueError, match="invalid base64"):
+            decode_inline_attachment(
+                {"filename": "bad.txt", "base64": "!!!not-base64!!!"}
+            )
+
+    def test_rejects_empty_content(self) -> None:
+        with pytest.raises(ValueError, match="empty"):
+            decode_inline_attachment(
+                {
+                    "filename": "empty.bin",
+                    "base64": base64.b64encode(b"").decode("ascii"),
+                }
+            )
+
+    def test_rejects_oversized_decoded_content(self) -> None:
+        with pytest.raises(ValueError, match="exceeds the 0 MiB"):
+            decode_inline_attachment(
+                {
+                    "filename": "big.bin",
+                    "base64": base64.b64encode(b"hello").decode("ascii"),
+                },
+                max_bytes=4,
+            )
+
+    def test_rejects_oversized_encoded_string_before_decode(self) -> None:
+        # Encoded length gate must fire before b64decode allocates.
+        huge = "A" * 64
+        with pytest.raises(ValueError, match="base64 payload exceeds"):
+            decode_inline_attachment(
+                {"filename": "big.bin", "base64": huge},
+                max_bytes=4,
+                max_base64_chars=16,
+            )
+
+    def test_rejects_missing_filename(self) -> None:
+        with pytest.raises(ValueError, match="filename is required"):
+            decode_inline_attachment({"base64": base64.b64encode(b"x").decode("ascii")})
+
+    def test_attachment_max_count_constant(self) -> None:
+        assert ATTACHMENT_MAX_COUNT == 10
