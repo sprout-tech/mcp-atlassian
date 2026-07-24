@@ -84,7 +84,7 @@ Update a Jira issue, attach files/images, transition, comment, or log work.
 | `fields` | `string` | No | JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). For 'description', provide text in Markdown format; on Jira Cloud, use '`{expand:Title}`...`{expand}`' for a collapsible section. Example: '`{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\nMarkdown text"}`' |
 | `additional_fields` | `string` | No | (Optional) JSON string of additional fields to update. Use this for custom fields or more complex updates. Link to epic: `{"epicKey": "EPIC-123"}` or `{"epic_link": "EPIC-123"}`. |
 | `components` | `string` | No | (Optional) Comma-separated list of component names (e.g., 'Frontend,API') |
-| `attachments` | `string` | No | USE THIS TO ATTACH FILES OR SCREENSHOTS TO AN EXISTING ISSUE (e.g. user says 'add this image to PK-123'). There is no separate jira_upload_attachment tool. PREFERRED for screenshots / anything larger than a few KB: save the file under the MCP server workspace (e.g. uploads/screenshot.png) and pass a relative path JSON array like ["uploads/screenshot.png"]. Do NOT base64-encode large images into this argument (inline base64 soft-capped at 65536 bytes) — LLMs cannot reliably pass 100k+ character tool args. Tiny files only may use inline objects: [`{"filename":"tiny.png","mime_type":"image/png","base64":"<short ImageContent.data>"}`]. Absolute paths outside the MCP server CWD are rejected. Max 10 items. |
+| `attachments` | `string` | No | USE THIS TO ATTACH FILES OR SCREENSHOTS TO AN EXISTING ISSUE (e.g. 'add this image to PK-123'). No separate upload tool. TWO MODES: (1) Same filesystem as the MCP server — write under the MCP CWD and pass a relative path, e.g. ["uploads/screenshot.png"]. Absolute paths outside the MCP CWD are always rejected. (2) Separate sandbox (Claude Desktop / remote agent that cannot write into the MCP install dir) — you MUST use inline base64 from ImageContent.data, e.g. [`{"filename":"screenshot.png","mime_type":"image/png","base64":"<ImageContent.data>"}`]; do not try paths to your private Desktop/uploads folders. Inline base64 limited to 5 MiB; max 10 items. |
 | `transition` | `string` | No | (Optional) Transition name or ID. Transition names are resolved case-insensitively. |
 | `comment` | `string` | No | (Optional) Comment text in Markdown format. |
 | `comment_visibility` | `string` | No | (Optional) Comment visibility as a JSON string, for example '`{"type":"group","value":"jira-users"}`'. |
@@ -94,11 +94,11 @@ Update a Jira issue, attach files/images, transition, comment, or log work.
 **Examples:**
 
 ```json
-{"issue_key": "PROJ-123", "attachments": "[\"uploads/screenshot.png\"]", "return_fields": "key,summary"}
+{"issue_key": "PROJ-123", "attachments": "[{\"filename\":\"screenshot.png\",\"mime_type\":\"image/png\",\"base64\":\"<ImageContent.data>\"}]", "return_fields": "key,summary"}
 ```
 
 ```json
-{"issue_key": "PROJ-123", "attachments": "[{\"filename\":\"tiny.png\",\"mime_type\":\"image/png\",\"base64\":\"iVBORw0KGgo=\"}]", "return_fields": "key,summary"}
+{"issue_key": "PROJ-123", "attachments": "[\"uploads/screenshot.png\"]", "return_fields": "key,summary"}
 ```
 
 ```json
@@ -106,17 +106,18 @@ Update a Jira issue, attach files/images, transition, comment, or log work.
 ```
 
 <Tip>
-**Attach a screenshot / chat image:** use this tool (there is no `jira_upload_attachment`). Preferred: save the file under the MCP server workspace (e.g. `uploads/screenshot.png`) and pass a relative path — `attachments: ["uploads/screenshot.png"]`. Do **not** base64-encode large images into the tool argument (inline base64 is soft-capped ~64 KiB); LLMs cannot reliably pass 100k+ character args.
+**Attach a screenshot / chat image** (no separate upload tool):
 
-Tiny files only may use inline `{filename, base64, mime_type}` objects.
+- **Claude Desktop / agent sandbox that cannot write into the MCP install dir:** pass inline base64 from `ImageContent.data` — `attachments: [{"filename":"shot.png","mime_type":"image/png","base64":"<ImageContent.data>"}]`. Do not pass paths under your private `uploads/` folder; the MCP server cannot read them (`validate_safe_path` confines paths to its own CWD).
+- **Same filesystem as the MCP server (e.g. Cursor in this repo):** prefer a relative path under the MCP CWD — `attachments: ["uploads/shot.png"]`.
 
-Save response tokens: after an update you rarely need the whole issue back. Set `return_fields` to only the field(s) you changed (e.g., `return_fields: "duedate"`) — this can cut thousands of tokens. Use `*all` only when you need the full updated issue.
+Inline base64 is soft-capped (default 5 MiB). Absolute paths outside the MCP CWD are always rejected.
 
-`fields` is optional when you only need to attach files, transition, comment, or log work. If `transition` and `comment` are both provided, the issue is transitioned first and the comment is added separately afterward. Use `comment_visibility` to restrict the comment's visibility.
+Save response tokens: after an update you rarely need the whole issue back. Set `return_fields` to only the field(s) you changed (e.g., `return_fields: "duedate"`). Use `*all` only when you need the full updated issue.
+
+`fields` is optional when you only need to attach files, transition, comment, or log work.
 
 Use `additional_fields` as a JSON string for any field not covered by explicit parameters. Find field IDs with `jira_search_fields`.
-
-Absolute paths outside the MCP server CWD are rejected (`validate_safe_path`).
 </Tip>
 
 ---

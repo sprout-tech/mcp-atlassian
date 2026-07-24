@@ -2114,21 +2114,19 @@ async def update_issue(
         Field(
             description=(
                 "USE THIS TO ATTACH FILES OR SCREENSHOTS TO AN EXISTING ISSUE "
-                "(e.g. user says 'add this image to PK-123'). "
-                "There is no separate jira_upload_attachment tool. "
-                "PREFERRED for screenshots / anything larger than a few KB: "
-                "save the file under the MCP server workspace "
-                "(e.g. uploads/screenshot.png) and pass a relative path "
-                'JSON array like ["uploads/screenshot.png"]. '
-                "Do NOT base64-encode large images into this argument "
-                f"(inline base64 soft-capped at "
-                f"{ATTACHMENT_INLINE_MAX_BYTES} bytes) — LLMs cannot reliably "
-                "pass 100k+ character tool args. "
-                "Tiny files only may use inline objects: "
-                '[{"filename":"tiny.png","mime_type":"image/png",'
-                '"base64":"<short ImageContent.data>"}]. '
-                "Absolute paths outside the MCP server CWD are rejected. "
-                f"Max {ATTACHMENT_MAX_COUNT} items."
+                "(e.g. 'add this image to PK-123'). No separate upload tool. "
+                "TWO MODES: (1) Same filesystem as the MCP server — write under "
+                "the MCP CWD and pass a relative path, e.g. "
+                '["uploads/screenshot.png"]. Absolute paths outside the MCP '
+                "CWD are always rejected. (2) Separate sandbox (Claude Desktop "
+                "/ remote agent that cannot write into the MCP install dir) — "
+                "you MUST use inline base64 from ImageContent.data, e.g. "
+                '[{"filename":"screenshot.png","mime_type":"image/png",'
+                '"base64":"<ImageContent.data>"}]; do not try paths to your '
+                "private Desktop/uploads folders. "
+                f"Inline base64 limited to "
+                f"{ATTACHMENT_INLINE_MAX_BYTES // (1024 * 1024)} MiB; "
+                f"max {ATTACHMENT_MAX_COUNT} items."
             ),
             default=None,
         ),
@@ -2196,10 +2194,13 @@ async def update_issue(
 ) -> str:
     """Update a Jira issue, attach files/images, transition, comment, or log work.
 
-    Primary tool for "add this image/screenshot to the issue". Prefer a
-    workspace-relative path in ``attachments`` (save under the MCP CWD, e.g.
-    ``uploads/shot.png``). Inline base64 is only for tiny payloads — large
-    base64 tool args are rejected. There is no separate upload tool.
+    Primary tool for "add this image/screenshot to the issue".
+
+    When the agent shares a filesystem with the MCP server, prefer a
+    workspace-relative path in ``attachments``. When it does not (Claude
+    Desktop, remote sandbox), pass inline base64 from ``ImageContent.data`` —
+    paths to the agent's private uploads folder will be rejected. There is
+    no separate upload tool.
 
     Args:
         ctx: The FastMCP context.
@@ -2208,10 +2209,9 @@ async def update_issue(
             'description' should use Markdown format.
         additional_fields: Optional JSON string of additional fields.
         components: Comma-separated list of component names.
-        attachments: Attach files or images. Prefer a JSON array of
-            workspace-relative paths (e.g. ``["uploads/shot.png"]``). Inline
-            ``{filename, base64, mime_type?}`` objects are only for tiny
-            files; screenshots should use paths.
+        attachments: Attach files or images. JSON array of workspace-relative
+            paths and/or ``{filename, base64, mime_type?}`` objects. Use
+            base64 when the agent cannot write into the MCP server CWD.
         transition: Optional transition name or ID.
         comment: Optional issue comment in Markdown format.
         comment_visibility: Optional JSON string restricting comment visibility.

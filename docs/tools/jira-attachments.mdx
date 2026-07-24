@@ -21,7 +21,7 @@ Download attachments from a Jira issue.
 <Tip>
 Downloads all attachments from the issue. Files larger than 50MB are skipped. Returns base64-encoded content.
 
-To **upload / attach** a screenshot to an existing issue, use `jira_update_issue` with a workspace-relative path in `attachments` (e.g. `["uploads/shot.png"]`). Inline base64 is only for tiny files; large base64 tool args are rejected.
+To **upload / attach** to an existing issue, use `jira_update_issue`. If the agent cannot write into the MCP server CWD (Claude Desktop), pass inline base64. If it shares the MCP filesystem, prefer a relative path like `["uploads/shot.png"]`.
 </Tip>
 
 ---

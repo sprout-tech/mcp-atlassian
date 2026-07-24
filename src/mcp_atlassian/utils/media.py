@@ -18,11 +18,12 @@ ATTACHMENT_MAX_BYTES: int = 50 * 1024 * 1024
 # Maximum number of inline (base64) attachments accepted in a single tool call.
 ATTACHMENT_MAX_COUNT: int = 10
 
-# Soft cap for base64 embedded in MCP tool JSON arguments. Typical screenshots
-# exceed this; agents should write under the server CWD and pass a path instead
-# (stuffing 100k+ base64 chars into a tool arg is unreliable for LLMs).
+# Soft cap for base64 embedded in MCP tool JSON arguments.
+# Sized for typical chat screenshots (~0.1–2 MiB) when the agent and MCP
+# server do **not** share a filesystem (e.g. Claude Desktop vs a repo-local
+# MCP CWD). Path upload remains preferred when both can use the same CWD.
 # Hard ceiling for path-based / non-tool transfers remains ATTACHMENT_MAX_BYTES.
-ATTACHMENT_INLINE_MAX_BYTES: int = 64 * 1024
+ATTACHMENT_INLINE_MAX_BYTES: int = 5 * 1024 * 1024
 
 # Encoded length ceiling for ATTACHMENT_MAX_BYTES of raw content (base64).
 # 4 * ceil(n / 3) characters; allow a small pad for whitespace the caller may
@@ -173,9 +174,12 @@ def decode_inline_attachment(
             return (
                 f"Attachment '{safe_filename}' inline base64 is too large for a "
                 f"tool argument ({actual} bytes; limit "
-                f"{ATTACHMENT_INLINE_MAX_BYTES} bytes). Save the file under the "
-                f"MCP server workspace (e.g. uploads/{safe_filename}) and pass "
-                f"a relative path string in attachments instead of base64."
+                f"{ATTACHMENT_INLINE_MAX_BYTES} bytes / "
+                f"{ATTACHMENT_INLINE_MAX_BYTES // (1024 * 1024)} MiB). "
+                f"If you share a filesystem with the MCP server, save under its "
+                f"workspace (e.g. uploads/{safe_filename}) and pass a relative "
+                f"path. Otherwise compress/resize the image under the limit and "
+                f"retry with base64 — paths outside the MCP CWD are rejected."
             )
         return (
             f"Attachment '{safe_filename}' exceeds the "

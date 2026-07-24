@@ -346,4 +346,4 @@ class TestDecodeInlineAttachment:
 
     def test_attachment_max_count_constant(self) -> None:
         assert ATTACHMENT_MAX_COUNT == 10
-        assert ATTACHMENT_INLINE_MAX_BYTES == 64 * 1024
+        assert ATTACHMENT_INLINE_MAX_BYTES == 5 * 1024 * 1024
