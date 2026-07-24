@@ -70,9 +70,9 @@ Cloud uses ADF format internally (auto-converted from Markdown). Server/DC uses 
 
 ---
 
-### Update Issue
+### Update Issue / Attach Files (chat images)
 
-Update an issue and optionally transition, comment, and log work.
+Update a Jira issue, attach files/images, transition, comment, or log work.
 
 <Note>This is a **write** tool. Disabled when `READ_ONLY_MODE=true`.</Note>
 
@@ -84,7 +84,7 @@ Update an issue and optionally transition, comment, and log work.
 | `fields` | `string` | No | JSON string of fields to update. For 'assignee', provide a string identifier (email, name, or accountId). For 'description', provide text in Markdown format; on Jira Cloud, use '`{expand:Title}`...`{expand}`' for a collapsible section. Example: '`{"assignee": "user@example.com", "summary": "New Summary", "description": "## Updated\nMarkdown text"}`' |
 | `additional_fields` | `string` | No | (Optional) JSON string of additional fields to update. Use this for custom fields or more complex updates. Link to epic: `{"epicKey": "EPIC-123"}` or `{"epic_link": "EPIC-123"}`. |
 | `components` | `string` | No | (Optional) Comma-separated list of component names (e.g., 'Frontend,API') |
-| `attachments` | `string` | No | (Optional) Attachments to upload. Prefer a JSON array string. Each item is either a workspace-relative file path string (confined to the MCP server CWD; absolute paths outside the workspace are rejected), or an object with 'filename', base64-encoded 'base64' content, and optional 'mime_type' for chat-paste / remote uploads that never touch the filesystem. Example path list: ["screenshots/a.png"] or comma-separated 'screenshots/a.png,docs/b.pdf'. Example inline (from chat ImageContent.data): [`{"filename":"shot.png","mime_type":"image/png","base64":"..."}`]. At most 10 items; each inline payload capped at 50 MiB. |
+| `attachments` | `string` | No | USE THIS TO ATTACH FILES OR CHAT IMAGES TO AN EXISTING ISSUE (e.g. user says 'add this image/screenshot to PK-123'). There is no separate jira_upload_attachment tool — attach here. Pass a JSON array string. For a pasted/attached chat image, do NOT write a temp file: put the image's ImageContent.data (base64) inline, e.g. [`{"filename":"screenshot.png","mime_type":"image/png","base64":"<ImageContent.data>"}`]. Workspace-relative file path strings also work (e.g. ["screenshots/a.png"]); absolute paths outside the MCP server CWD are rejected. Max 10 items; each inline payload ≤ 50 MiB. |
 | `transition` | `string` | No | (Optional) Transition name or ID. Transition names are resolved case-insensitively. |
 | `comment` | `string` | No | (Optional) Comment text in Markdown format. |
 | `comment_visibility` | `string` | No | (Optional) Comment visibility as a JSON string, for example '`{"type":"group","value":"jira-users"}`'. |
@@ -94,21 +94,23 @@ Update an issue and optionally transition, comment, and log work.
 **Examples:**
 
 ```json
-{"issue_key": "PROJ-123", "fields": "{\"summary\": \"Updated title\", \"description\": \"New description\"}", "transition": "Done", "comment": "Completed the work", "worklog": "1h"}
-```
-
-```json
 {"issue_key": "PROJ-123", "attachments": "[{\"filename\":\"screenshot.png\",\"mime_type\":\"image/png\",\"base64\":\"<ImageContent.data>\"}]", "return_fields": "key,summary"}
 ```
 
+```json
+{"issue_key": "PROJ-123", "fields": "{\"summary\": \"Updated title\", \"description\": \"New description\"}", "transition": "Done", "comment": "Completed the work", "worklog": "1h"}
+```
+
 <Tip>
+**Attach a chat image / screenshot:** use this tool (there is no `jira_upload_attachment`). Put the pasted image's `ImageContent.data` in `attachments` as inline base64 — do not write a temp file. Example: user says "add this image to PK-123" → call with `issue_key` + `attachments: [{"filename":"screenshot.png","mime_type":"image/png","base64":"<ImageContent.data>"}]`.
+
 Save response tokens: after an update you rarely need the whole issue back. Set `return_fields` to only the field(s) you changed (e.g., `return_fields: "duedate"`) — this can cut thousands of tokens. Use `*all` only when you need the full updated issue.
 
-`fields` is optional when you only need to transition, comment, or log work. If `transition` and `comment` are both provided, the issue is transitioned first and the comment is added separately afterward. Use `comment_visibility` to restrict the comment's visibility.
+`fields` is optional when you only need to attach files, transition, comment, or log work. If `transition` and `comment` are both provided, the issue is transitioned first and the comment is added separately afterward. Use `comment_visibility` to restrict the comment's visibility.
 
 Use `additional_fields` as a JSON string for any field not covered by explicit parameters. Find field IDs with `jira_search_fields`.
 
-**Chat / remote image upload:** paste or attach an image in chat, then pass MCP `ImageContent.data` as `attachments` inline objects (`filename`, `base64`, optional `mime_type`). Content is uploaded in memory — do not write chat images to `/tmp` or other paths outside the server workspace. Workspace path strings are still supported and remain confined to the MCP server CWD.
+Workspace path strings in `attachments` remain supported and are confined to the MCP server CWD; absolute paths outside the workspace are rejected.
 </Tip>
 
 ---

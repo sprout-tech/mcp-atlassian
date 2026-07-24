@@ -2059,8 +2059,11 @@ async def batch_get_changelogs(
 
 
 @jira_mcp.tool(
-    tags={"jira", "write", "toolset:jira_issues"},
-    annotations={"title": "Update Issue", "destructiveHint": True},
+    tags={"jira", "write", "attachments", "toolset:jira_issues"},
+    annotations={
+        "title": "Update Issue / Attach Files (chat images)",
+        "destructiveHint": True,
+    },
 )
 @check_write_access
 async def update_issue(
@@ -2109,19 +2112,19 @@ async def update_issue(
         str | None,
         Field(
             description=(
-                "(Optional) Attachments to upload. Prefer a JSON array string. "
-                "Each item is either a workspace-relative file path string "
-                "(confined to the MCP server CWD; absolute paths outside the "
-                "workspace are rejected), or an object with 'filename', "
-                "base64-encoded 'base64' content, and optional 'mime_type' "
-                "for chat-paste / remote uploads that never touch the "
-                "filesystem. Example path list: "
-                '["screenshots/a.png"] or comma-separated '
-                "'screenshots/a.png,docs/b.pdf'. Example inline (from chat "
-                "ImageContent.data): "
-                '[{"filename":"shot.png","mime_type":"image/png","base64":"..."}]. '
-                f"At most {ATTACHMENT_MAX_COUNT} items; each inline payload "
-                f"capped at {ATTACHMENT_MAX_BYTES // (1024 * 1024)} MiB."
+                "USE THIS TO ATTACH FILES OR CHAT IMAGES TO AN EXISTING ISSUE "
+                "(e.g. user says 'add this image/screenshot to PK-123'). "
+                "There is no separate jira_upload_attachment tool — attach here. "
+                "Pass a JSON array string. For a pasted/attached chat image, "
+                "do NOT write a temp file: put the image's ImageContent.data "
+                "(base64) inline, e.g. "
+                '[{"filename":"screenshot.png","mime_type":"image/png",'
+                '"base64":"<ImageContent.data>"}]. '
+                "Workspace-relative file path strings also work "
+                '(e.g. ["screenshots/a.png"]); absolute paths outside the '
+                "MCP server CWD are rejected. "
+                f"Max {ATTACHMENT_MAX_COUNT} items; each inline payload "
+                f"≤ {ATTACHMENT_MAX_BYTES // (1024 * 1024)} MiB."
             ),
             default=None,
         ),
@@ -2187,7 +2190,12 @@ async def update_issue(
         ),
     ] = "*all",
 ) -> str:
-    """Update an issue and optionally transition, comment, and log work.
+    """Update a Jira issue, attach files/images, transition, comment, or log work.
+
+    Primary tool for "add this image/screenshot to the issue": pass the chat
+    image via ``attachments`` as inline base64 (``ImageContent.data``). There
+    is no separate upload tool. Also updates fields, transitions status,
+    adds comments, and logs work.
 
     Args:
         ctx: The FastMCP context.
@@ -2196,8 +2204,10 @@ async def update_issue(
             'description' should use Markdown format.
         additional_fields: Optional JSON string of additional fields.
         components: Comma-separated list of component names.
-        attachments: Optional JSON array of workspace file paths and/or
-            inline ``{filename, base64, mime_type?}`` objects (chat images).
+        attachments: Attach files or chat images. JSON array of workspace
+            paths and/or ``{filename, base64, mime_type?}`` objects. For
+            \"add this image to PROJ-123\", use the inline base64 form with
+            the image's ``ImageContent.data`` — no temp file required.
         transition: Optional transition name or ID.
         comment: Optional issue comment in Markdown format.
         comment_visibility: Optional JSON string restricting comment visibility.
