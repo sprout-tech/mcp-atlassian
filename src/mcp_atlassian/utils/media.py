@@ -18,10 +18,20 @@ ATTACHMENT_MAX_BYTES: int = 50 * 1024 * 1024
 # Maximum number of inline (base64) attachments accepted in a single tool call.
 ATTACHMENT_MAX_COUNT: int = 10
 
+# Soft cap for base64 embedded in MCP tool JSON arguments. Typical screenshots
+# exceed this; agents should write under the server CWD and pass a path instead
+# (stuffing 100k+ base64 chars into a tool arg is unreliable for LLMs).
+# Hard ceiling for path-based / non-tool transfers remains ATTACHMENT_MAX_BYTES.
+ATTACHMENT_INLINE_MAX_BYTES: int = 64 * 1024
+
 # Encoded length ceiling for ATTACHMENT_MAX_BYTES of raw content (base64).
 # 4 * ceil(n / 3) characters; allow a small pad for whitespace the caller may
 # have included before strip.
 ATTACHMENT_MAX_BASE64_CHARS: int = 4 * math.ceil(ATTACHMENT_MAX_BYTES / 3) + 8
+
+ATTACHMENT_INLINE_MAX_BASE64_CHARS: int = (
+    4 * math.ceil(ATTACHMENT_INLINE_MAX_BYTES / 3) + 8
+)
 
 _IMAGE_MIME_TYPES = frozenset(
     {
@@ -97,7 +107,7 @@ def sanitize_attachment_filename(filename: str) -> str:
 def decode_inline_attachment(
     file: Mapping[str, Any] | dict[str, Any],
     *,
-    max_bytes: int = ATTACHMENT_MAX_BYTES,
+    max_bytes: int = ATTACHMENT_INLINE_MAX_BYTES,
     max_base64_chars: int | None = None,
 ) -> tuple[str, str, bytes]:
     """Decode a base64 attachment descriptor into upload-ready bytes.
@@ -107,21 +117,25 @@ def decode_inline_attachment(
     where content arrives as ``ImageContent.data`` (or equivalent) rather
     than a server-local file path.
 
+    The default ``max_bytes`` is the soft MCP tool-arg cap
+    (``ATTACHMENT_INLINE_MAX_BYTES``). Pass ``ATTACHMENT_MAX_BYTES`` for
+    larger in-memory transfers that are not embedded in a tool JSON string
+    (e.g. JSM create-request attachments).
+
     Args:
         file: A mapping with ``filename``, optional ``mime_type``, and
             base64-encoded ``base64`` content.
         max_bytes: Maximum decoded payload size in bytes.
         max_base64_chars: Maximum encoded string length before decode.
-            Defaults to the shared ``ATTACHMENT_MAX_BASE64_CHARS`` when
-            ``max_bytes`` is the default; otherwise derived from
-            ``max_bytes``.
+            Defaults from ``max_bytes`` (inline vs hard-cap constants).
 
     Returns:
         A tuple of ``(filename, mime_type, content_bytes)``.
 
     Raises:
         ValueError: If the descriptor is malformed, oversized, empty, or
-            not valid base64.
+            not valid base64. Oversized inline payloads include guidance to
+            use a workspace-relative path instead.
     """
     if not isinstance(file, Mapping):
         raise ValueError("Each attachment must be an object")
@@ -146,17 +160,33 @@ def decode_inline_attachment(
     encoded = encoded.strip()
 
     if max_base64_chars is None:
-        if max_bytes == ATTACHMENT_MAX_BYTES:
+        if max_bytes == ATTACHMENT_INLINE_MAX_BYTES:
+            max_base64_chars = ATTACHMENT_INLINE_MAX_BASE64_CHARS
+        elif max_bytes == ATTACHMENT_MAX_BYTES:
             max_base64_chars = ATTACHMENT_MAX_BASE64_CHARS
         else:
             max_base64_chars = 4 * math.ceil(max_bytes / 3) + 8
 
-    if len(encoded) > max_base64_chars:
-        msg = (
-            f"Attachment '{safe_filename}' base64 payload exceeds the "
+    def _too_large_message(actual: int) -> str:
+        # Soft MCP tool-arg guidance only when using the default inline cap.
+        if max_bytes == ATTACHMENT_INLINE_MAX_BYTES:
+            return (
+                f"Attachment '{safe_filename}' inline base64 is too large for a "
+                f"tool argument ({actual} bytes; limit "
+                f"{ATTACHMENT_INLINE_MAX_BYTES} bytes). Save the file under the "
+                f"MCP server workspace (e.g. uploads/{safe_filename}) and pass "
+                f"a relative path string in attachments instead of base64."
+            )
+        return (
+            f"Attachment '{safe_filename}' exceeds the "
             f"{max_bytes // (1024 * 1024)} MiB inline limit"
         )
-        raise ValueError(msg)
+
+    if len(encoded) > max_base64_chars:
+        # Approximate decoded size without allocating a full decode when the
+        # encoded string itself already exceeds the gate.
+        approx_bytes = max((len(encoded) * 3) // 4, max_bytes + 1)
+        raise ValueError(_too_large_message(approx_bytes))
 
     try:
         content = base64.b64decode(encoded, validate=True)
@@ -168,11 +198,7 @@ def decode_inline_attachment(
         msg = f"Attachment '{safe_filename}' is empty"
         raise ValueError(msg)
     if len(content) > max_bytes:
-        msg = (
-            f"Attachment '{safe_filename}' exceeds the "
-            f"{max_bytes // (1024 * 1024)} MiB inline limit"
-        )
-        raise ValueError(msg)
+        raise ValueError(_too_large_message(len(content)))
 
     return safe_filename, mime_type, content
 

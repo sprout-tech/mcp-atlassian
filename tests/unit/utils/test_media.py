@@ -5,6 +5,7 @@ import base64
 import pytest
 
 from mcp_atlassian.utils.media import (
+    ATTACHMENT_INLINE_MAX_BYTES,
     ATTACHMENT_MAX_BYTES,
     ATTACHMENT_MAX_COUNT,
     decode_inline_attachment,
@@ -305,12 +306,39 @@ class TestDecodeInlineAttachment:
     def test_rejects_oversized_encoded_string_before_decode(self) -> None:
         # Encoded length gate must fire before b64decode allocates.
         huge = "A" * 64
-        with pytest.raises(ValueError, match="base64 payload exceeds"):
+        with pytest.raises(ValueError, match="exceeds the 0 MiB"):
             decode_inline_attachment(
                 {"filename": "big.bin", "base64": huge},
                 max_bytes=4,
                 max_base64_chars=16,
             )
+
+    def test_soft_cap_rejects_screenshot_sized_inline_base64(self) -> None:
+        """Screenshots should use workspace paths, not 100k-char tool args."""
+        payload = b"x" * (ATTACHMENT_INLINE_MAX_BYTES + 1)
+        with pytest.raises(
+            ValueError,
+            match=r"too large for a tool argument.*uploads/big\.png",
+        ):
+            decode_inline_attachment(
+                {
+                    "filename": "big.png",
+                    "base64": base64.b64encode(payload).decode("ascii"),
+                }
+            )
+
+    def test_hard_cap_still_allows_larger_when_explicit(self) -> None:
+        """Non-tool transfers (e.g. JSM) may raise the ceiling."""
+        payload = b"x" * (ATTACHMENT_INLINE_MAX_BYTES + 1)
+        filename, _mime, content = decode_inline_attachment(
+            {
+                "filename": "ok.bin",
+                "base64": base64.b64encode(payload).decode("ascii"),
+            },
+            max_bytes=ATTACHMENT_MAX_BYTES,
+        )
+        assert filename == "ok.bin"
+        assert content == payload
 
     def test_rejects_missing_filename(self) -> None:
         with pytest.raises(ValueError, match="filename is required"):
@@ -318,3 +346,4 @@ class TestDecodeInlineAttachment:
 
     def test_attachment_max_count_constant(self) -> None:
         assert ATTACHMENT_MAX_COUNT == 10
+        assert ATTACHMENT_INLINE_MAX_BYTES == 64 * 1024

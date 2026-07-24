@@ -13,6 +13,8 @@ from .lifecycle import (
 )
 from .logging import setup_logging
 from .media import (
+    ATTACHMENT_INLINE_MAX_BASE64_CHARS,
+    ATTACHMENT_INLINE_MAX_BYTES,
     ATTACHMENT_MAX_BASE64_CHARS,
     ATTACHMENT_MAX_BYTES,
     ATTACHMENT_MAX_COUNT,
@@ -34,6 +36,8 @@ from .urls import is_atlassian_cloud_url, resolve_relative_url, validate_url_for
 
 # Export all utility functions for backward compatibility
 __all__ = [
+    "ATTACHMENT_INLINE_MAX_BASE64_CHARS",
+    "ATTACHMENT_INLINE_MAX_BYTES",
     "ATTACHMENT_MAX_BASE64_CHARS",
     "ATTACHMENT_MAX_BYTES",
     "ATTACHMENT_MAX_COUNT",

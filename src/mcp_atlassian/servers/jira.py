@@ -22,6 +22,7 @@ from mcp_atlassian.servers.error_handling import ErrorPreservingFastMCP
 from mcp_atlassian.servers.helpers import resolve_transition
 from mcp_atlassian.utils.decorators import check_write_access
 from mcp_atlassian.utils.media import (
+    ATTACHMENT_INLINE_MAX_BYTES,
     ATTACHMENT_MAX_BYTES,
     ATTACHMENT_MAX_COUNT,
     decode_inline_attachment,
@@ -2112,19 +2113,22 @@ async def update_issue(
         str | None,
         Field(
             description=(
-                "USE THIS TO ATTACH FILES OR CHAT IMAGES TO AN EXISTING ISSUE "
-                "(e.g. user says 'add this image/screenshot to PK-123'). "
-                "There is no separate jira_upload_attachment tool — attach here. "
-                "Pass a JSON array string. For a pasted/attached chat image, "
-                "do NOT write a temp file: put the image's ImageContent.data "
-                "(base64) inline, e.g. "
-                '[{"filename":"screenshot.png","mime_type":"image/png",'
-                '"base64":"<ImageContent.data>"}]. '
-                "Workspace-relative file path strings also work "
-                '(e.g. ["screenshots/a.png"]); absolute paths outside the '
-                "MCP server CWD are rejected. "
-                f"Max {ATTACHMENT_MAX_COUNT} items; each inline payload "
-                f"≤ {ATTACHMENT_MAX_BYTES // (1024 * 1024)} MiB."
+                "USE THIS TO ATTACH FILES OR SCREENSHOTS TO AN EXISTING ISSUE "
+                "(e.g. user says 'add this image to PK-123'). "
+                "There is no separate jira_upload_attachment tool. "
+                "PREFERRED for screenshots / anything larger than a few KB: "
+                "save the file under the MCP server workspace "
+                "(e.g. uploads/screenshot.png) and pass a relative path "
+                'JSON array like ["uploads/screenshot.png"]. '
+                "Do NOT base64-encode large images into this argument "
+                f"(inline base64 soft-capped at "
+                f"{ATTACHMENT_INLINE_MAX_BYTES} bytes) — LLMs cannot reliably "
+                "pass 100k+ character tool args. "
+                "Tiny files only may use inline objects: "
+                '[{"filename":"tiny.png","mime_type":"image/png",'
+                '"base64":"<short ImageContent.data>"}]. '
+                "Absolute paths outside the MCP server CWD are rejected. "
+                f"Max {ATTACHMENT_MAX_COUNT} items."
             ),
             default=None,
         ),
@@ -2192,10 +2196,10 @@ async def update_issue(
 ) -> str:
     """Update a Jira issue, attach files/images, transition, comment, or log work.
 
-    Primary tool for "add this image/screenshot to the issue": pass the chat
-    image via ``attachments`` as inline base64 (``ImageContent.data``). There
-    is no separate upload tool. Also updates fields, transitions status,
-    adds comments, and logs work.
+    Primary tool for "add this image/screenshot to the issue". Prefer a
+    workspace-relative path in ``attachments`` (save under the MCP CWD, e.g.
+    ``uploads/shot.png``). Inline base64 is only for tiny payloads — large
+    base64 tool args are rejected. There is no separate upload tool.
 
     Args:
         ctx: The FastMCP context.
@@ -2204,10 +2208,10 @@ async def update_issue(
             'description' should use Markdown format.
         additional_fields: Optional JSON string of additional fields.
         components: Comma-separated list of component names.
-        attachments: Attach files or chat images. JSON array of workspace
-            paths and/or ``{filename, base64, mime_type?}`` objects. For
-            \"add this image to PROJ-123\", use the inline base64 form with
-            the image's ``ImageContent.data`` — no temp file required.
+        attachments: Attach files or images. Prefer a JSON array of
+            workspace-relative paths (e.g. ``["uploads/shot.png"]``). Inline
+            ``{filename, base64, mime_type?}`` objects are only for tiny
+            files; screenshots should use paths.
         transition: Optional transition name or ID.
         comment: Optional issue comment in Markdown format.
         comment_visibility: Optional JSON string restricting comment visibility.

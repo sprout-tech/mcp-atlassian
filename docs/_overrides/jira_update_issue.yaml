@@ -1,10 +1,14 @@
 examples:
   - |
-    {"issue_key": "PROJ-123", "attachments": "[{\"filename\":\"screenshot.png\",\"mime_type\":\"image/png\",\"base64\":\"<ImageContent.data>\"}]", "return_fields": "key,summary"}
+    {"issue_key": "PROJ-123", "attachments": "[\"uploads/screenshot.png\"]", "return_fields": "key,summary"}
+  - |
+    {"issue_key": "PROJ-123", "attachments": "[{\"filename\":\"tiny.png\",\"mime_type\":\"image/png\",\"base64\":\"iVBORw0KGgo=\"}]", "return_fields": "key,summary"}
   - |
     {"issue_key": "PROJ-123", "fields": "{\"summary\": \"Updated title\", \"description\": \"New description\"}", "transition": "Done", "comment": "Completed the work", "worklog": "1h"}
 tips: |
-  **Attach a chat image / screenshot:** use this tool (there is no `jira_upload_attachment`). Put the pasted image's `ImageContent.data` in `attachments` as inline base64 — do not write a temp file. Example: user says "add this image to PK-123" → call with `issue_key` + `attachments: [{"filename":"screenshot.png","mime_type":"image/png","base64":"<ImageContent.data>"}]`.
+  **Attach a screenshot / chat image:** use this tool (there is no `jira_upload_attachment`). Preferred: save the file under the MCP server workspace (e.g. `uploads/screenshot.png`) and pass a relative path — `attachments: ["uploads/screenshot.png"]`. Do **not** base64-encode large images into the tool argument (inline base64 is soft-capped ~64 KiB); LLMs cannot reliably pass 100k+ character args.
+
+  Tiny files only may use inline `{filename, base64, mime_type}` objects.
 
   Save response tokens: after an update you rarely need the whole issue back. Set `return_fields` to only the field(s) you changed (e.g., `return_fields: "duedate"`) — this can cut thousands of tokens. Use `*all` only when you need the full updated issue.
 
@@ -12,4 +16,4 @@ tips: |
 
   Use `additional_fields` as a JSON string for any field not covered by explicit parameters. Find field IDs with `jira_search_fields`.
 
-  Workspace path strings in `attachments` remain supported and are confined to the MCP server CWD; absolute paths outside the workspace are rejected.
+  Absolute paths outside the MCP server CWD are rejected (`validate_safe_path`).

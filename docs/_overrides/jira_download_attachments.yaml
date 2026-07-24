@@ -3,4 +3,4 @@ example: |
 tips: |
   Downloads all attachments from the issue. Files larger than 50MB are skipped. Returns base64-encoded content.
 
-  To **upload / attach** a file or chat-pasted image to an existing issue, use `jira_update_issue` (title: "Update Issue / Attach Files") with `attachments` — inline `{filename, base64, mime_type}` from `ImageContent.data`, or a workspace-relative path. There is no separate upload tool.
+  To **upload / attach** a screenshot to an existing issue, use `jira_update_issue` with a workspace-relative path in `attachments` (e.g. `["uploads/shot.png"]`). Inline base64 is only for tiny files; large base64 tool args are rejected.
